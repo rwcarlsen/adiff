@@ -7,12 +7,14 @@ import (
 )
 
 type Problem struct {
-	Eqn           Func
-	Nvars         int
-	WantFunc      func(x []float64) float64
-	WantDerivFunc func(v Variable, x []float64) float64
-	Xmin, Xmax    float64
-	Tol           float64
+	Eqn             Func
+	Nvars           int
+	WantFunc        func(x []float64) float64
+	WantDerivFunc   func(v Variable, x []float64) float64
+	CheckDerivs     [][]Variable // each entry is a list of independent vars to take partial deriv for
+	CheckDerivsWant []func(x []float64) float64
+	Xmin, Xmax      float64
+	Tol             float64
 }
 
 var x Variable = 0
@@ -20,69 +22,74 @@ var y Variable = 1
 
 var problems []*Problem = []*Problem{
 	&Problem{
-		Nvars:         1,
-		Eqn:           x,
-		WantFunc:      func(x []float64) float64 { return x[0] },
-		WantDerivFunc: func(v Variable, x []float64) float64 { return 1 },
-		Xmin:          0, Xmax: 1,
-		Tol: 1e-10,
-	},
-	&Problem{
-		Nvars:         1,
-		Eqn:           &Pow{x, Constant(2)},
-		WantFunc:      func(x []float64) float64 { return x[0] * x[0] },
-		WantDerivFunc: func(v Variable, x []float64) float64 { return 2 * x[0] },
-		Xmin:          0, Xmax: 1,
-		Tol: 1e-10,
-	},
-	&Problem{
-		Nvars:    2,
-		Eqn:      &Pow{x, Constant(2)},
-		WantFunc: func(x []float64) float64 { return x[0] * x[0] },
-		WantDerivFunc: func(v Variable, x []float64) float64 {
-			if v == 0 {
-				return 2 * x[0]
-			}
-			return 0
+		Nvars:       1,
+		Eqn:         x,
+		WantFunc:    func(x []float64) float64 { return x[0] },
+		CheckDerivs: [][]Variable{{x}},
+		CheckDerivsWant: []func(x []float64) float64{
+			func(x []float64) float64 { return 1 },
 		},
 		Xmin: 0, Xmax: 1,
 		Tol: 1e-10,
 	},
 	&Problem{
-		Nvars:    2,
-		Eqn:      Mult{x, y},
-		WantFunc: func(x []float64) float64 { return x[0] * x[1] },
-		WantDerivFunc: func(v Variable, x []float64) float64 {
-			if v == 0 {
-				return x[1]
-			}
-			return x[0]
+		Nvars:       1,
+		Eqn:         &Pow{x, Constant(2)},
+		WantFunc:    func(x []float64) float64 { return x[0] * x[0] },
+		CheckDerivs: [][]Variable{{x}},
+		CheckDerivsWant: []func(x []float64) float64{
+			func(x []float64) float64 { return 2 * x[0] },
 		},
 		Xmin: 0, Xmax: 1,
 		Tol: 1e-10,
 	},
 	&Problem{
-		Nvars:    2,
-		Eqn:      Mult{&Pow{x, Constant(2)}, y},
-		WantFunc: func(x []float64) float64 { return x[0] * x[0] * x[1] },
-		WantDerivFunc: func(v Variable, x []float64) float64 {
-			if v == 0 {
-				return 2 * x[0] * x[1]
-			}
-			return x[0] * x[0]
+		Nvars:       2,
+		Eqn:         &Pow{x, Constant(2)},
+		WantFunc:    func(x []float64) float64 { return x[0] * x[0] },
+		CheckDerivs: [][]Variable{{x}, {y}},
+		CheckDerivsWant: []func(x []float64) float64{
+			func(x []float64) float64 { return 2 * x[0] },
+			func(x []float64) float64 { return 0 },
 		},
 		Xmin: 0, Xmax: 1,
 		Tol: 1e-10,
 	},
 	&Problem{
-		Nvars:    2,
-		Eqn:      Sum{Mult{&Pow{x, Constant(2)}, y}, &Pow{y, Constant(2)}, Constant(7)},
-		WantFunc: func(x []float64) float64 { return x[0]*x[0]*x[1] + x[1]*x[1] + 7 },
-		WantDerivFunc: func(v Variable, x []float64) float64 {
-			if v == 0 {
-				return 2 * x[0] * x[1]
-			}
-			return x[0]*x[0] + 2*x[1]
+		Nvars:       2,
+		Eqn:         Mult{x, y},
+		WantFunc:    func(x []float64) float64 { return x[0] * x[1] },
+		CheckDerivs: [][]Variable{{x}, {y}},
+		CheckDerivsWant: []func(x []float64) float64{
+			func(x []float64) float64 { return x[1] },
+			func(x []float64) float64 { return x[0] },
+		},
+		Xmin: 0, Xmax: 1,
+		Tol: 1e-10,
+	},
+	&Problem{
+		Nvars:       2,
+		Eqn:         Mult{&Pow{x, Constant(2)}, y},
+		WantFunc:    func(x []float64) float64 { return x[0] * x[0] * x[1] },
+		CheckDerivs: [][]Variable{{x}, {y}},
+		CheckDerivsWant: []func(x []float64) float64{
+			func(x []float64) float64 { return 2 * x[0] * x[1] },
+			func(x []float64) float64 { return x[0] * x[0] },
+		},
+		Xmin: 0, Xmax: 1,
+		Tol: 1e-10,
+	},
+	&Problem{
+		Nvars:       2,
+		Eqn:         Sum{Mult{&Pow{x, Constant(2)}, y}, &Pow{y, Constant(2)}, Constant(7)},
+		WantFunc:    func(x []float64) float64 { return x[0]*x[0]*x[1] + x[1]*x[1] + 7 },
+		CheckDerivs: [][]Variable{{x}, {y}, {x, x}, {x, y}, {y, x}},
+		CheckDerivsWant: []func(x []float64) float64{
+			func(x []float64) float64 { return 2 * x[0] * x[1] },
+			func(x []float64) float64 { return x[0]*x[0] + 2*x[1] },
+			func(x []float64) float64 { return 2 * x[1] },
+			func(x []float64) float64 { return 2 * x[0] },
+			func(x []float64) float64 { return 2 * x[0] },
 		},
 		Xmin: 0, Xmax: 1,
 		Tol: 1e-10,
@@ -118,14 +125,20 @@ func testProb(p *Problem) func(t *testing.T) {
 				t.Logf("     f%v = %v", x, got)
 			}
 
-			gotDerivs := make([]float64, p.Nvars)
-			for i := range gotDerivs {
-				got := p.Eqn.Partial(Variable(i)).Val(x)
-				wantderiv := p.WantDerivFunc(Variable(i), x)
-				if math.Abs(got-wantderiv) > p.Tol {
-					t.Errorf("FAIL     dfdv%v: want %v, got %v", i, wantderiv, got)
+			for i, deriv := range p.CheckDerivs {
+				fn := p.Eqn
+				dname := ""
+				for _, jvar := range deriv {
+					dname += fmt.Sprintf("dv%v", jvar)
+					fn = fn.Partial(jvar)
+				}
+
+				want := p.CheckDerivsWant[i](x)
+				got := fn.Val(x)
+				if math.Abs(got-want) > p.Tol {
+					t.Errorf("FAIL     df/%v: want %v, got %v", dname, want, got)
 				} else {
-					t.Logf("         dfdv%v = %v", i, got)
+					t.Logf("         df/%v = %v", dname, got)
 				}
 			}
 		}
