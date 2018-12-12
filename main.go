@@ -139,16 +139,21 @@ type Tanh struct {
 	Func
 }
 
+func (t *Tanh) SetInner(f Func)        { t.Func = f }
 func (t Tanh) Val(x []float64) float64 { return math.Tanh(t.Func.Val(x)) }
 func (t Tanh) Partial(v Variable) Func {
 	return Mult{
 		t.Func.Partial(v),
 		Sum{
 			Constant(1),
-			Negative(&Pow{Tanh{t.Func}, Constant(2)}),
+			Negative(&Pow{&Tanh{t.Func}, Constant(2)}),
 		},
 	}
 }
+
+type Passthrough struct{ Func }
+
+func (p *Passthrough) SetInner(f Func) { p.Func = f }
 
 type Network struct {
 	nextVarIndex int
@@ -156,6 +161,7 @@ type Network struct {
 	Weights      []Variable
 	CostFunc     Func
 	State        []float64
+	Outputs      []*Neuron
 }
 
 func (n *Network) Train(learnRate float64, varData [][]float64) {
@@ -173,11 +179,22 @@ func (n *Network) Train(learnRate float64, varData [][]float64) {
 			n.State[int(index)] = pos[i]
 		}
 
-		for _, wvar := range n.Weights {
-			w := int(wvar)
-			// n.State[w] = current weight - we update it using cost gradient w.r.t. itself
-			n.State[w] += -learnRate * n.CostFunc.Partial(wvar).Val(n.State)
-			fmt.Printf("new weight%v=%v\n", w, n.State[w])
+		currNeurons := n.Outputs
+		nextNeurons := []*Neuron{}
+		for len(currNeurons) > 0 {
+			nextNeurons = nextNeurons[:0]
+			for _, neuron := range currNeurons {
+				for _, w := range neuron.Weights {
+					n.State[int(w)] += -learnRate * n.CostFunc.Partial(w).Val(n.State)
+					//fmt.Printf("new weight%v=%v\n", w, n.State[int(w)])
+				}
+				for _, f := range neuron.Inputs {
+					if neur, ok := f.(*Neuron); ok {
+						nextNeurons = append(nextNeurons, neur)
+					}
+				}
+			}
+			currNeurons = nextNeurons
 		}
 	}
 }
@@ -199,13 +216,33 @@ func (n *Network) addWeight() Variable {
 }
 
 func (n *Network) NewNeuron() *Neuron {
-	return &Neuron{network: n}
+	return &Neuron{network: n, Activation: &Tanh{}}
+}
+
+func (n *Network) NewInput() (*Neuron, Variable) {
+	v := n.addVar()
+	neuron := n.NewNeuron()
+	neuron.Inputs = append(neuron.Inputs, v)
+	neuron.Weights = append(neuron.Weights, n.addWeight())
+	return neuron, v
+}
+
+func (n *Network) NewOutput(a ActivationFunc) *Neuron {
+	neuron := &Neuron{network: n, Activation: a}
+	n.Outputs = append(n.Outputs, neuron)
+	return neuron
+}
+
+type ActivationFunc interface {
+	Func
+	SetInner(f Func)
 }
 
 type Neuron struct {
-	network *Network
-	Inputs  []Func
-	Weights []Variable
+	network    *Network
+	Inputs     []Func
+	Weights    []Variable
+	Activation ActivationFunc
 }
 
 func (n *Neuron) PullFrom(neurons ...*Neuron) *Neuron {
@@ -216,19 +253,13 @@ func (n *Neuron) PullFrom(neurons ...*Neuron) *Neuron {
 	return n
 }
 
-func (n *Neuron) MarkInput() (*Neuron, Variable) {
-	v := n.network.addVar()
-	n.Inputs = append(n.Inputs, v)
-	n.Weights = append(n.Weights, n.network.addWeight())
-	return n, v
-}
-
 func (n *Neuron) Val(x []float64) float64 {
-	tot := 0.0
+	var fn Sum
 	for i := range n.Weights {
-		tot += n.Weights[i].Val(x) * n.Inputs[i].Val(x)
+		fn = append(fn, Mult{n.Weights[i], n.Inputs[i]})
 	}
-	return math.Tanh(tot)
+	n.Activation.SetInner(fn)
+	return n.Activation.Val(x)
 }
 
 func (n *Neuron) Partial(v Variable) Func {
@@ -236,7 +267,8 @@ func (n *Neuron) Partial(v Variable) Func {
 	for i := range n.Weights {
 		fn = append(fn, Mult{n.Weights[i], n.Inputs[i]})
 	}
-	return Tanh{fn}.Partial(v)
+	n.Activation.SetInner(fn)
+	return n.Activation.Partial(v)
 }
 
 func Laplace(f Func, vars ...Variable) Func {
@@ -251,18 +283,21 @@ var plot = flag.String("plot", "", "'svg' to create svg plot with gnuplot")
 
 func main() {
 	flag.Parse()
+	//prob1d()
+	prob2d()
+}
 
+func prob2d() {
 	var net Network
-	in1, var1 := net.NewNeuron().MarkInput()
-	in2, var2 := net.NewNeuron().MarkInput()
-	out1 := net.NewNeuron().PullFrom(in1, in2)
+	in1, var1 := net.NewInput()
+	in2, var2 := net.NewInput()
+	out1 := net.NewOutput(&Passthrough{}).PullFrom(in1, in2)
 
 	// a PDE would be defined like follows
 	u, x, y := out1, var1, var2
-	//forcingFunc := Constant(10)
-	//diffusionCoeff := Constant(2)
-	//residual := Sum{Mult{Laplace(u, x, y), diffusionCoeff}, Negative(forcingFunc)}
-	residual := &Pow{Sum{u, Negative(x)}, Constant(2)}
+	forcingFunc := Constant(10)
+	diffusionCoeff := Constant(2)
+	residual := Sum{Mult{Laplace(u, x, y), diffusionCoeff}, Negative(forcingFunc)}
 	net.CostFunc = residual
 
 	// we can then use the residual as a cost function to update the weights using a
@@ -276,24 +311,23 @@ func main() {
 		}
 	}
 
-	learnRate := 2.0
+	learnRate := .98
 	net.Train(learnRate, trainingPositions)
 
 	// look at the results
 	var buf bytes.Buffer
 	for xv := 0.0; xv < 5; xv += .1 {
-		yv := 0.0
-		//for yv := 0.0; yv < 5; yv += .1 {
-		net.State[int(x)] = xv
-		net.State[int(y)] = yv
-		fmt.Fprintf(&buf, "%v %v %v\n", xv, yv, u.Val(net.State))
-		//}
+		for yv := 0.0; yv < 5; yv += .1 {
+			net.State[int(x)] = xv
+			net.State[int(y)] = yv
+			fmt.Fprintf(&buf, "%v %v %v\n", xv, yv, u.Val(net.State))
+		}
 	}
 
-	if *plot == "" {
-		fmt.Println("Solution (x y u):")
-		fmt.Print(buf.String())
-	} else {
+	fmt.Println("Solution (x y u):")
+	fmt.Print(buf.String())
+
+	if *plot != "" {
 		cmd := exec.Command("gnuplot", "-e", `set terminal svg; set output "`+*plot+`"; plot "-" u 1:2:3 w image`)
 		cmd.Stdin = &buf
 		cmd.Stdout = os.Stdout
@@ -302,4 +336,42 @@ func main() {
 			log.Fatal(err)
 		}
 	}
+}
+
+func prob1d() {
+	var net Network
+	in1, var1 := net.NewInput()
+	// This is a dummy input and variable to enable the network to output nonzero values when all
+	// inputs are zero.
+	dummyin, dummyvar := net.NewInput()
+
+	out1 := net.NewOutput(&Passthrough{}).PullFrom(in1, dummyin)
+
+	// a PDE would be defined like follows
+	u, x := out1, var1
+	// we want to approximate u(x) = 3 so error=(u-3)^2
+	residual := &Pow{Sum{u, Constant(-3)}, Constant(2)}
+	net.CostFunc = residual
+
+	// build training data (input variable combos) and train the network
+	trainingPositions := [][]float64{}
+	for xv := 0.0; xv < 5; xv += .1 {
+		// dummy input value corresponding to our dummy variable
+		dummy := 1.0
+		trainingPositions = append(trainingPositions, []float64{xv, dummy})
+	}
+
+	learnRate := .98
+	net.Train(learnRate, trainingPositions)
+
+	// look at the results
+	var buf bytes.Buffer
+	for xv := 0.0; xv < 5; xv += .1 {
+		net.State[int(x)] = xv
+		net.State[int(dummyvar)] = 1.0
+		fmt.Fprintf(&buf, "%v\t%v\n", xv, u.Val(net.State))
+	}
+
+	fmt.Println("Solution (x u):")
+	fmt.Print(buf.String())
 }
