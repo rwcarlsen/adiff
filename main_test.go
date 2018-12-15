@@ -34,6 +34,22 @@ var problems []*Problem = []*Problem{
 	},
 	&Problem{
 		Nvars:       1,
+		Eqn:         Abs(x),
+		WantFunc:    func(x []float64) float64 { return math.Abs(x[0]) },
+		CheckDerivs: [][]Variable{{x}},
+		CheckDerivsWant: []func(x []float64) float64{
+			func(x []float64) float64 {
+				if x[0] < 0 {
+					return -1
+				}
+				return 1
+			},
+		},
+		Xmin: 0, Xmax: 1,
+		Tol: 1e-10,
+	},
+	&Problem{
+		Nvars:       1,
 		Eqn:         &Pow{x, Constant(2)},
 		WantFunc:    func(x []float64) float64 { return x[0] * x[0] },
 		CheckDerivs: [][]Variable{{x}},
@@ -80,7 +96,8 @@ var problems []*Problem = []*Problem{
 		Tol: 1e-10,
 	},
 	&Problem{
-		Nvars:       2,
+		Nvars: 2,
+		// x^2 * y + y^2 + 7
 		Eqn:         Sum{Mult{&Pow{x, Constant(2)}, y}, &Pow{y, Constant(2)}, Constant(7)},
 		WantFunc:    func(x []float64) float64 { return x[0]*x[0]*x[1] + x[1]*x[1] + 7 },
 		CheckDerivs: [][]Variable{{x}, {y}, {x, x}, {x, y}, {y, x}},
@@ -110,6 +127,7 @@ func testProb(p *Problem) func(t *testing.T) {
 			divs[i] = ndivs
 		}
 
+		t.Log("Equation: ", p.Eqn)
 		perms := Permute(0, divs...)
 
 		x := make([]float64, p.Nvars)
@@ -129,16 +147,18 @@ func testProb(p *Problem) func(t *testing.T) {
 				fn := p.Eqn
 				dname := ""
 				for _, jvar := range deriv {
-					dname += fmt.Sprintf("dv%v", jvar)
-					fn = fn.Partial(jvar)
+					dname += fmt.Sprintf("dv%v", int(jvar))
+					fn = fn.Partial(jvar).Simplify()
 				}
 
 				want := p.CheckDerivsWant[i](x)
 				got := fn.Val(x)
 				if math.Abs(got-want) > p.Tol {
 					t.Errorf("FAIL     df/%v: want %v, got %v", dname, want, got)
+					t.Errorf("         df/%v = %v", dname, fn.Simplify())
 				} else {
 					t.Logf("         df/%v = %v", dname, got)
+					t.Logf("         df/%v = %v", dname, fn.Simplify())
 				}
 			}
 		}
