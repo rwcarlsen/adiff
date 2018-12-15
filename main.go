@@ -435,8 +435,9 @@ var plot = flag.String("plot", "", "'svg' to create svg plot with gnuplot")
 
 func main() {
 	flag.Parse()
-	prob1d()
+	prob1dDiscont()
 	//prob1d()
+	//prob2d()
 }
 
 func prob2d() {
@@ -542,15 +543,17 @@ func prob1dDiscont() {
 	// a PDE would be defined like follows
 	u, x := out1, var1
 	// heat transfer coeff is piecewise k(x < .5)=1, k(x >= .5)=2
-	k := Branch(func(x []float64) Func {
-		if x[0] < .5 {
-			return Constant(1)
-		}
-		return Constant(2)
-	})
-	heatSource := Constant(1)
-	residual := Abs(Sum{Mult{k, Laplace(u, x)}, heatSource})
-	net.CostFunc = residual
+	//k := Branch(func(x []float64) Func {
+	//	if x[0] < .5 {
+	//		return Constant(1)
+	//	}
+	//	return Constant(2)
+	//})
+	k := Constant(1)
+	heatSource := Constant(0)
+	residual := Pow{Sum{Mult{k, Laplace(u, x)}, heatSource}, Constant(2)}
+	net.CostFunc = residual.Simplify()
+	fmt.Println("costfunc: ", net.CostFunc)
 
 	// build training data (input variable combos) and train the network
 	trainingPositions := [][]float64{}
@@ -565,7 +568,7 @@ func prob1dDiscont() {
 
 	// look at the results
 	var buf bytes.Buffer
-	for xv := 0.0; xv < 5; xv += .1 {
+	for xv := 0.0; xv < 1; xv += .1 {
 		net.State[int(x)] = xv
 		net.State[int(dummyvar)] = 1.0
 		fmt.Fprintf(&buf, "%v\t%v\n", xv, u.Val(net.State))
