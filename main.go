@@ -166,7 +166,7 @@ func (m Mult) Simplify() Func {
 
 	simpler = append(simpler, Constant(constTot))
 	for _, f := range dups {
-		simpler = append(simpler, f)
+		simpler = append(simpler, f.Simplify())
 	}
 
 	if len(simpler) == 0 {
@@ -307,6 +307,7 @@ func (n *Network) Train(learnRate float64, varData [][]float64) {
 			n.State[int(w)] = 1
 		}
 	}
+	derivs := map[Variable]Func{}
 
 	// train network using residual (cost function)
 	for _, pos := range varData {
@@ -320,7 +321,11 @@ func (n *Network) Train(learnRate float64, varData [][]float64) {
 			nextNeurons = nextNeurons[:0]
 			for _, neuron := range currNeurons {
 				for _, w := range neuron.Weights {
-					n.State[int(w)] += -learnRate * n.CostFunc.Partial(w).Val(n.State)
+					if _, ok := derivs[w]; !ok {
+						derivs[w] = n.CostFunc.Partial(w).Simplify()
+					}
+					costfunc := derivs[w]
+					n.State[int(w)] += -learnRate * costfunc.Val(n.State)
 					//fmt.Printf("new weight%v=%v\n", w, n.State[int(w)])
 				}
 				for _, f := range neuron.Inputs {
@@ -430,8 +435,8 @@ var plot = flag.String("plot", "", "'svg' to create svg plot with gnuplot")
 
 func main() {
 	flag.Parse()
+	prob1d()
 	//prob1d()
-	prob2d()
 }
 
 func prob2d() {
@@ -471,6 +476,7 @@ func prob2d() {
 		}
 	}
 
+	fmt.Println("Approximation Eqn: ", out1)
 	fmt.Println("Solution (x y u):")
 	fmt.Print(buf.String())
 
@@ -519,6 +525,7 @@ func prob1d() {
 		fmt.Fprintf(&buf, "%v\t%v\n", xv, u.Val(net.State))
 	}
 
+	fmt.Println("Approximation Eqn: ", out1)
 	fmt.Println("Solution (x u):")
 	fmt.Print(buf.String())
 }
@@ -564,6 +571,7 @@ func prob1dDiscont() {
 		fmt.Fprintf(&buf, "%v\t%v\n", xv, u.Val(net.State))
 	}
 
+	fmt.Println("Approximation Eqn: ", out1)
 	fmt.Println("Solution (x u):")
 	fmt.Print(buf.String())
 }
