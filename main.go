@@ -57,6 +57,7 @@ func (s Sum) Partial(v Variable) Func {
 
 func (s Sum) Simplify() Func {
 	nonzero := Sum{}
+	// skip all zero terms
 	for _, f := range s {
 		simple := f.Simplify()
 		if c, ok := simple.(Constant); ok && float64(c) == 0 {
@@ -67,6 +68,7 @@ func (s Sum) Simplify() Func {
 
 	simpler := Sum{}
 	constTot := 0.0
+	// merge all constant terms into a single term
 	for _, f := range nonzero {
 		simple := f.Simplify()
 		if c, ok := simple.(Constant); ok {
@@ -122,14 +124,18 @@ func (m Mult) Simplify() Func {
 	for _, f := range m {
 		simple := f.Simplify()
 		if c, ok := simple.(Constant); ok && float64(c) == 0 {
+			// if any term is zero, the entire mult expression is zero
 			return Constant(0)
 		} else if c, ok := simple.(Constant); ok && float64(c) == 1 {
+			// if any term is "1", skip it - it doesn't affect the mult expression's value
 			continue
 		} else if inner, ok := simple.(Mult); ok {
+			// if any term is itself a mult expression, just merge it with this one
 			for _, in := range inner {
 				simplified = append(simplified, in.Simplify())
 			}
 		} else {
+			// otherwise, just add/keep the term
 			simplified = append(simplified, simple)
 		}
 	}
@@ -137,6 +143,9 @@ func (m Mult) Simplify() Func {
 	dups := map[Variable]*Pow{}
 	simpler := Mult{}
 	constTot := 1.0
+	// if any term is a Pow expression with a variable base, track it so we can merge e.g.
+	// v^f*v^g style expressions to be v^(f+g). This applies also to straight variable terms
+	// which are equivalent to Pow{v, 1}.
 	for _, f := range simplified {
 		p, pok := f.(*Pow)
 		sv, svok := f.(Variable)
@@ -157,6 +166,7 @@ func (m Mult) Simplify() Func {
 			}
 			continue
 		}
+		// also merge all constant's together into a single constant term.
 		if c, ok := f.(Constant); ok {
 			constTot *= float64(c)
 			continue
@@ -164,6 +174,7 @@ func (m Mult) Simplify() Func {
 		simpler = append(simpler, f)
 	}
 
+	// add back the merged constant and pow expressions
 	simpler = append(simpler, Constant(constTot))
 	for _, f := range dups {
 		simpler = append(simpler, f.Simplify())
@@ -309,16 +320,25 @@ func (n *Network) Train(learnRate float64, varData [][]float64) {
 	}
 	derivs := map[Variable]Func{}
 
-	// train network using residual (cost function)
+	// train network using residual (cost function) evaluated at each training data point.
 	for _, pos := range varData {
 		for i, index := range n.Vars {
 			n.State[int(index)] = pos[i]
 		}
 
+		fmt.Printf("weights: %.3f", n.State[int(n.Weights[0])])
+		for _, w := range n.Weights[1:] {
+			fmt.Printf(", %.3f", n.State[int(w)])
+		}
+		fmt.Println()
+
+		// walk through each neuron layer starting at the output layer, propogating new weights to
+		// that layer until all weights have been updated.
 		currNeurons := n.Outputs
 		nextNeurons := []*Neuron{}
 		for len(currNeurons) > 0 {
 			nextNeurons = nextNeurons[:0]
+			// For each neuron in the layer, update all its weights
 			for _, neuron := range currNeurons {
 				for _, w := range neuron.Weights {
 					if _, ok := derivs[w]; !ok {
@@ -367,8 +387,14 @@ func (n *Network) NewInput() (*Neuron, Variable) {
 	return neuron, v
 }
 
-func (n *Network) NewOutput(a ActivationFunc) *Neuron {
+func (n *Network) NewOutputFunc(a ActivationFunc) *Neuron {
 	neuron := &Neuron{network: n, Activation: a}
+	n.Outputs = append(n.Outputs, neuron)
+	return neuron
+}
+
+func (n *Network) NewOutput() *Neuron {
+	neuron := &Neuron{network: n, Activation: &Passthrough{}}
 	n.Outputs = append(n.Outputs, neuron)
 	return neuron
 }
@@ -444,7 +470,7 @@ func prob2d() {
 	var net Network
 	in1, var1 := net.NewInput()
 	in2, var2 := net.NewInput()
-	out1 := net.NewOutput(&Passthrough{}).PullFrom(in1, in2)
+	out1 := net.NewOutput().PullFrom(in1, in2)
 
 	// a PDE would be defined like follows
 	u, x, y := out1, var1, var2
@@ -499,7 +525,7 @@ func prob1d() {
 	// inputs are zero.
 	dummyin, dummyvar := net.NewInput()
 
-	out1 := net.NewOutput(&Passthrough{}).PullFrom(in1, dummyin)
+	out1 := net.NewOutput().PullFrom(in1, dummyin)
 
 	// a PDE would be defined like follows
 	u, x := out1, var1
@@ -538,37 +564,53 @@ func prob1dDiscont() {
 	// inputs are zero.
 	dummyin, dummyvar := net.NewInput()
 
-	out1 := net.NewOutput(&Passthrough{}).PullFrom(in1, dummyin)
+	// hidden layer
+	//n1 := net.NewNeuron().PullFrom(in1, dummyin)
+	//n2 := net.NewNeuron().PullFrom(in1, dummyin)
+	//n3 := net.NewNeuron().PullFrom(in1, dummyin)
 
-	// a PDE would be defined like follows
+	//out1 := net.NewOutput().PullFrom(n1, n2, n3)
+	out1 := net.NewOutput().PullFrom(in1, dummyin)
+	fmt.Println("networkFunc: ", out1)
+
+	// convenient vars/names for building our PDE and BCs
 	u, x := out1, var1
-	// heat transfer coeff is piecewise k(x < .5)=1, k(x >= .5)=2
-	//k := Branch(func(x []float64) Func {
-	//	if x[0] < .5 {
-	//		return Constant(1)
-	//	}
-	//	return Constant(2)
-	//})
+
+	// define boundary conditions
+	penalty := Constant(10.0)
+	bcs := Branch(func(xv []float64) Func {
+		if xv[int(x)] == 0 {
+			return Sum{Constant(1), Negative(u)}
+		} else if xv[int(x)] == 1 {
+			return Sum{Constant(7), Negative(u)}
+		}
+		return Constant(0)
+	})
+
 	k := Constant(1)
 	heatSource := Constant(0)
-	residual := Pow{Sum{Mult{k, Laplace(u, x)}, heatSource}, Constant(2)}
-	net.CostFunc = residual.Simplify()
+	// define our PDE: -k*laplace(u) = S
+	residual := Sum{Mult{k, Laplace(u, x)}, heatSource}
+
+	net.CostFunc = Sum{&Pow{residual, Constant(2)}, &Pow{Mult{penalty, bcs}, Constant(2)}}.Simplify()
 	fmt.Println("costfunc: ", net.CostFunc)
 
 	// build training data (input variable combos) and train the network
 	trainingPositions := [][]float64{}
-	for xv := 0.0; xv < 1; xv += .01 {
-		// dummy input value corresponding to our dummy variable
-		dummy := 1.0
+	for xv := 0.01; xv < 1; xv += .01 {
+		dummy := 1.0 // dummy input value corresponding to our dummy variable
 		trainingPositions = append(trainingPositions, []float64{xv, dummy})
 	}
+	// manually add boundary positions
+	trainingPositions = append(trainingPositions, []float64{0, 1})
+	trainingPositions = append(trainingPositions, []float64{1, 1})
 
-	learnRate := .98
+	learnRate := .5
 	net.Train(learnRate, trainingPositions)
 
 	// look at the results
 	var buf bytes.Buffer
-	for xv := 0.0; xv < 1; xv += .1 {
+	for xv := 0.0; xv <= 1.1; xv += .1 {
 		net.State[int(x)] = xv
 		net.State[int(dummyvar)] = 1.0
 		fmt.Fprintf(&buf, "%v\t%v\n", xv, u.Val(net.State))
