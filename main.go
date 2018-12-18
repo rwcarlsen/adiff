@@ -332,29 +332,18 @@ func (n *Network) Train(learnRate float64, varData [][]float64) {
 		}
 		fmt.Println()
 
-		// walk through each neuron layer starting at the output layer, propogating new weights to
-		// that layer until all weights have been updated.
-		currNeurons := n.Outputs
-		nextNeurons := []*Neuron{}
-		for len(currNeurons) > 0 {
-			nextNeurons = nextNeurons[:0]
-			// For each neuron in the layer, update all its weights
-			for _, neuron := range currNeurons {
-				for _, w := range neuron.Weights {
-					if _, ok := derivs[w]; !ok {
-						derivs[w] = n.CostFunc.Partial(w).Simplify()
-					}
-					costfunc := derivs[w]
-					n.State[int(w)] += -learnRate * costfunc.Val(n.State)
-					//fmt.Printf("new weight%v=%v\n", w, n.State[int(w)])
-				}
-				for _, f := range neuron.Inputs {
-					if neur, ok := f.(*Neuron); ok {
-						nextNeurons = append(nextNeurons, neur)
-					}
-				}
+		// calculate a delta weight for each weight in the network
+		dweight := make([]float64, len(n.Weights))
+		for i, w := range n.Weights {
+			if _, ok := derivs[w]; !ok {
+				derivs[w] = n.CostFunc.Partial(w).Simplify()
 			}
-			currNeurons = nextNeurons
+			partialcost := derivs[w]
+			dweight[i] = -learnRate * partialcost.Val(n.State)
+		}
+		// update all weights together
+		for i, w := range n.Weights {
+			n.State[int(w)] += dweight[i]
 		}
 	}
 }
@@ -577,7 +566,7 @@ func prob1dDiscont() {
 	u, x := out1, var1
 
 	// define boundary conditions
-	penalty := Constant(10.0)
+	penalty := Constant(1.0)
 	bcs := Branch(func(xv []float64) Func {
 		if xv[int(x)] == 0 {
 			return Sum{Constant(1), Negative(u)}
@@ -605,7 +594,7 @@ func prob1dDiscont() {
 	trainingPositions = append(trainingPositions, []float64{0, 1})
 	trainingPositions = append(trainingPositions, []float64{1, 1})
 
-	learnRate := .5
+	learnRate := .9
 	net.Train(learnRate, trainingPositions)
 
 	// look at the results
