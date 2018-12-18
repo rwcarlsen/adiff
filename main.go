@@ -8,6 +8,8 @@ import (
 	"math"
 	"os"
 	"os/exec"
+
+	"gonum.org/v1/gonum/optimize"
 )
 
 type Variable int
@@ -306,46 +308,107 @@ type Network struct {
 	Vars         []Variable
 	Weights      []Variable
 	CostFunc     Func
-	State        []float64
+	state        []float64
 	Outputs      []*Neuron
+	TrainData    [][]float64
 }
 
-func (n *Network) Train(learnRate float64, varData [][]float64) {
-	if len(n.State) == 0 {
-		// initialize weights and vars input vector and set weights to 1
-		n.State = make([]float64, n.NVars())
-		for _, w := range n.Weights {
-			n.State[int(w)] = 1
-		}
+func (n *Network) Cost(weights []float64) float64 {
+	for i, index := range n.Weights {
+		n.state[int(index)] = weights[i]
 	}
-	derivs := map[Variable]Func{}
-
-	// train network using residual (cost function) evaluated at each training data point.
-	for _, pos := range varData {
+	tot := 0.0
+	for _, pos := range n.TrainData {
 		for i, index := range n.Vars {
-			n.State[int(index)] = pos[i]
+			n.state[int(index)] = pos[i]
 		}
+		c := n.CostFunc.Val(n.state)
+		tot += c * c
+	}
+	return tot
+}
 
-		fmt.Printf("weights: %.3f", n.State[int(n.Weights[0])])
-		for _, w := range n.Weights[1:] {
-			fmt.Printf(", %.3f", n.State[int(w)])
+func (n *Network) CostGradient(gradw, weights []float64) {
+	for i, index := range n.Weights {
+		n.state[int(index)] = weights[i]
+		gradw[i] = 0
+	}
+	for _, pos := range n.TrainData {
+		for i, index := range n.Vars {
+			n.state[int(index)] = pos[i]
 		}
-		fmt.Println()
-
-		// calculate a delta weight for each weight in the network
-		dweight := make([]float64, len(n.Weights))
 		for i, w := range n.Weights {
-			if _, ok := derivs[w]; !ok {
-				derivs[w] = n.CostFunc.Partial(w).Simplify()
-			}
-			partialcost := derivs[w]
-			dweight[i] = -learnRate * partialcost.Val(n.State)
-		}
-		// update all weights together
-		for i, w := range n.Weights {
-			n.State[int(w)] += dweight[i]
+			gradw[i] += 2 * n.CostFunc.Val(n.state) * n.CostFunc.Partial(w).Val(n.state)
 		}
 	}
+}
+
+func (n *Network) Train(learnRate float64) {
+	if len(n.state) == 0 {
+		// initialize weights and vars input vector and set weights to 1
+		n.state = make([]float64, n.NVars())
+		for _, w := range n.Weights {
+			n.state[int(w)] = 1
+		}
+	}
+
+	p := optimize.Problem{Func: n.Cost, Grad: n.CostGradient}
+	initx := make([]float64, len(n.Weights))
+	for i := range initx {
+		initx[i] = 1
+	}
+	settings := optimize.DefaultSettingsLocal()
+	result, err := optimize.Minimize(p, initx, settings, &optimize.BFGS{})
+	if err != nil {
+		log.Fatal(err)
+	}
+	if err = result.Status.Err(); err != nil {
+		log.Fatal(err)
+	}
+	for i := range result.X {
+		n.state[int(n.Weights[i])] = result.X[i]
+	}
+
+	//derivs := map[Variable]Func{}
+	//// train network using residual (cost function) evaluated at each training data point.
+	//for _, pos := range n.TrainData {
+	//	for i, index := range n.Vars {
+	//		n.state[int(index)] = pos[i]
+	//	}
+
+	//	fmt.Printf("weights: %.3f", n.state[int(n.Weights[0])])
+	//	for _, w := range n.Weights[1:] {
+	//		fmt.Printf(", %.3f", n.state[int(w)])
+	//	}
+	//	fmt.Println()
+
+	//	preCost := n.CostFunc.Val(n.state)
+	//	// calculate a delta weight for each weight in the network
+	//	dweight := make([]float64, len(n.Weights))
+	//	for i, w := range n.Weights {
+	//		if _, ok := derivs[w]; !ok {
+	//			derivs[w] = n.CostFunc.Partial(w).Simplify()
+	//		}
+	//		partialcost := derivs[w]
+	//		dweight[i] = partialcost.Val(n.state)
+	//	}
+
+	//	// update all weights together
+	//	for learnRate >= .001 {
+	//		for i, w := range n.Weights {
+	//			n.state[int(w)] += -learnRate * dweight[i]
+	//		}
+	//		postCost := n.CostFunc.Val(n.state)
+	//		if postCost >= preCost {
+	//			for i, w := range n.Weights {
+	//				n.state[int(w)] -= -learnRate * dweight[i]
+	//			}
+	//			learnRate *= .5
+	//			continue
+	//		}
+	//		break
+	//	}
+	//}
 }
 
 func (n *Network) NVars() int { return n.nextVarIndex }
@@ -398,6 +461,13 @@ type Neuron struct {
 	Inputs     []Func
 	Weights    []Variable
 	Activation ActivationFunc
+}
+
+func (n *Neuron) Eval(inputVars []float64) float64 {
+	for i, index := range n.network.Vars {
+		n.network.state[int(index)] = inputVars[i]
+	}
+	return n.Val(n.network.state)
 }
 
 func (n *Neuron) PullFrom(neurons ...*Neuron) *Neuron {
@@ -472,23 +542,20 @@ func prob2d() {
 	// backpropogation algorithm.
 
 	// build training data (input variable combos) and train the network
-	trainingPositions := [][]float64{}
 	for xv := 0.0; xv < 5; xv += .1 {
 		for yv := 0.0; yv < 5; yv += .1 {
-			trainingPositions = append(trainingPositions, []float64{xv, yv})
+			net.TrainData = append(net.TrainData, []float64{xv, yv})
 		}
 	}
 
 	learnRate := .98
-	net.Train(learnRate, trainingPositions)
+	net.Train(learnRate)
 
 	// look at the results
 	var buf bytes.Buffer
 	for xv := 0.0; xv < 5; xv += .1 {
 		for yv := 0.0; yv < 5; yv += .1 {
-			net.State[int(x)] = xv
-			net.State[int(y)] = yv
-			fmt.Fprintf(&buf, "%v %v %v\n", xv, yv, u.Val(net.State))
+			fmt.Fprintf(&buf, "%v %v %v\n", xv, yv, u.Eval([]float64{xv, yv}))
 		}
 	}
 
@@ -512,33 +579,31 @@ func prob1d() {
 	in1, var1 := net.NewInput()
 	// This is a dummy input and variable to enable the network to output nonzero values when all
 	// inputs are zero.
-	dummyin, dummyvar := net.NewInput()
+	dummyin, _ := net.NewInput()
 
 	out1 := net.NewOutput().PullFrom(in1, dummyin)
 
 	// a PDE would be defined like follows
 	u, x := out1, var1
+	_ = x
 	// we want to approximate u(x) = 3 so error=(u-3)^2
 	residual := &Pow{Sum{u, Constant(-3)}, Constant(2)}
 	net.CostFunc = residual
 
 	// build training data (input variable combos) and train the network
-	trainingPositions := [][]float64{}
 	for xv := 0.0; xv < 5; xv += .1 {
 		// dummy input value corresponding to our dummy variable
 		dummy := 1.0
-		trainingPositions = append(trainingPositions, []float64{xv, dummy})
+		net.TrainData = append(net.TrainData, []float64{xv, dummy})
 	}
 
 	learnRate := .98
-	net.Train(learnRate, trainingPositions)
+	net.Train(learnRate)
 
 	// look at the results
 	var buf bytes.Buffer
 	for xv := 0.0; xv < 5; xv += .1 {
-		net.State[int(x)] = xv
-		net.State[int(dummyvar)] = 1.0
-		fmt.Fprintf(&buf, "%v\t%v\n", xv, u.Val(net.State))
+		fmt.Fprintf(&buf, "%v\t%v\n", xv, u.Eval([]float64{xv, 1}))
 	}
 
 	fmt.Println("Approximation Eqn: ", out1)
@@ -551,7 +616,7 @@ func prob1dDiscont() {
 	in1, var1 := net.NewInput()
 	// This is a dummy input and variable to enable the network to output nonzero values when all
 	// inputs are zero.
-	dummyin, dummyvar := net.NewInput()
+	dummyin, _ := net.NewInput()
 
 	// hidden layer
 	//n1 := net.NewNeuron().PullFrom(in1, dummyin)
@@ -585,24 +650,21 @@ func prob1dDiscont() {
 	fmt.Println("costfunc: ", net.CostFunc)
 
 	// build training data (input variable combos) and train the network
-	trainingPositions := [][]float64{}
 	for xv := 0.01; xv < 1; xv += .01 {
 		dummy := 1.0 // dummy input value corresponding to our dummy variable
-		trainingPositions = append(trainingPositions, []float64{xv, dummy})
+		net.TrainData = append(net.TrainData, []float64{xv, dummy})
 	}
 	// manually add boundary positions
-	trainingPositions = append(trainingPositions, []float64{0, 1})
-	trainingPositions = append(trainingPositions, []float64{1, 1})
+	net.TrainData = append(net.TrainData, []float64{0, 1})
+	net.TrainData = append(net.TrainData, []float64{1, 1})
 
 	learnRate := .9
-	net.Train(learnRate, trainingPositions)
+	net.Train(learnRate)
 
 	// look at the results
 	var buf bytes.Buffer
 	for xv := 0.0; xv <= 1.1; xv += .1 {
-		net.State[int(x)] = xv
-		net.State[int(dummyvar)] = 1.0
-		fmt.Fprintf(&buf, "%v\t%v\n", xv, u.Val(net.State))
+		fmt.Fprintf(&buf, "%v\t%v\n", xv, u.Eval([]float64{xv, 1}))
 	}
 
 	fmt.Println("Approximation Eqn: ", out1)
