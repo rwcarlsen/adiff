@@ -177,7 +177,9 @@ func (m Mult) Simplify() Func {
 	}
 
 	// add back the merged constant and pow expressions
-	simpler = append(simpler, Constant(constTot))
+	if constTot != 1 {
+		simpler = append(simpler, Constant(constTot))
+	}
 	for _, f := range dups {
 		simpler = append(simpler, f.Simplify())
 	}
@@ -311,6 +313,7 @@ type Network struct {
 	state        []float64
 	Outputs      []*Neuron
 	TrainData    [][]float64
+	partials     []Func
 }
 
 func (n *Network) Cost(weights []float64) float64 {
@@ -319,31 +322,39 @@ func (n *Network) Cost(weights []float64) float64 {
 	}
 	tot := 0.0
 	for _, pos := range n.TrainData {
+		fmt.Println("evaling position ", pos)
 		for i, index := range n.Vars {
 			n.state[int(index)] = pos[i]
 		}
 		c := n.CostFunc.Val(n.state)
-		tot += c * c
+		tot += c
 	}
 	return tot
 }
 
 func (n *Network) CostGradient(gradw, weights []float64) {
+	if n.partials == nil {
+		for _, w := range n.Weights {
+			n.partials = append(n.partials, n.CostFunc.Partial(w))
+		}
+	}
+
 	for i, index := range n.Weights {
 		n.state[int(index)] = weights[i]
 		gradw[i] = 0
 	}
 	for _, pos := range n.TrainData {
+		fmt.Println("evaling gradient position ", pos)
 		for i, index := range n.Vars {
 			n.state[int(index)] = pos[i]
 		}
-		for i, w := range n.Weights {
-			gradw[i] += 2 * n.CostFunc.Val(n.state) * n.CostFunc.Partial(w).Val(n.state)
+		for i, p := range n.partials {
+			gradw[i] += p.Val(n.state)
 		}
 	}
 }
 
-func (n *Network) Train(learnRate float64) {
+func (n *Network) Train() {
 	if len(n.state) == 0 {
 		// initialize weights and vars input vector and set weights to 1
 		n.state = make([]float64, n.NVars())
@@ -369,46 +380,10 @@ func (n *Network) Train(learnRate float64) {
 		n.state[int(n.Weights[i])] = result.X[i]
 	}
 
-	//derivs := map[Variable]Func{}
-	//// train network using residual (cost function) evaluated at each training data point.
-	//for _, pos := range n.TrainData {
-	//	for i, index := range n.Vars {
-	//		n.state[int(index)] = pos[i]
-	//	}
-
-	//	fmt.Printf("weights: %.3f", n.state[int(n.Weights[0])])
-	//	for _, w := range n.Weights[1:] {
-	//		fmt.Printf(", %.3f", n.state[int(w)])
-	//	}
-	//	fmt.Println()
-
-	//	preCost := n.CostFunc.Val(n.state)
-	//	// calculate a delta weight for each weight in the network
-	//	dweight := make([]float64, len(n.Weights))
-	//	for i, w := range n.Weights {
-	//		if _, ok := derivs[w]; !ok {
-	//			derivs[w] = n.CostFunc.Partial(w).Simplify()
-	//		}
-	//		partialcost := derivs[w]
-	//		dweight[i] = partialcost.Val(n.state)
-	//	}
-
-	//	// update all weights together
-	//	for learnRate >= .001 {
-	//		for i, w := range n.Weights {
-	//			n.state[int(w)] += -learnRate * dweight[i]
-	//		}
-	//		postCost := n.CostFunc.Val(n.state)
-	//		if postCost >= preCost {
-	//			for i, w := range n.Weights {
-	//				n.state[int(w)] -= -learnRate * dweight[i]
-	//			}
-	//			learnRate *= .5
-	//			continue
-	//		}
-	//		break
-	//	}
-	//}
+	fmt.Printf("Stats:\n")
+	fmt.Printf("    Major Iterations: %v\n", result.MajorIterations)
+	fmt.Printf("    Func Evaluations: %v\n", result.FuncEvaluations)
+	fmt.Printf("    Grad Evaluations: %v\n", result.GradEvaluations)
 }
 
 func (n *Network) NVars() int { return n.nextVarIndex }
@@ -548,8 +523,7 @@ func prob2d() {
 		}
 	}
 
-	learnRate := .98
-	net.Train(learnRate)
+	net.Train()
 
 	// look at the results
 	var buf bytes.Buffer
@@ -597,8 +571,7 @@ func prob1d() {
 		net.TrainData = append(net.TrainData, []float64{xv, dummy})
 	}
 
-	learnRate := .98
-	net.Train(learnRate)
+	net.Train()
 
 	// look at the results
 	var buf bytes.Buffer
@@ -619,55 +592,68 @@ func prob1dDiscont() {
 	dummyin, _ := net.NewInput()
 
 	// hidden layer
-	//n1 := net.NewNeuron().PullFrom(in1, dummyin)
-	//n2 := net.NewNeuron().PullFrom(in1, dummyin)
-	//n3 := net.NewNeuron().PullFrom(in1, dummyin)
+	n1 := net.NewNeuron().PullFrom(in1, dummyin)
+	n2 := net.NewNeuron().PullFrom(in1, dummyin)
+	n3 := net.NewNeuron().PullFrom(in1, dummyin)
 
-	//out1 := net.NewOutput().PullFrom(n1, n2, n3)
-	out1 := net.NewOutput().PullFrom(in1, dummyin)
+	out1 := net.NewOutput().PullFrom(n1, n2, n3)
+	//out1 := net.NewOutput().PullFrom(in1, dummyin)
 	fmt.Println("networkFunc: ", out1)
 
 	// convenient vars/names for building our PDE and BCs
 	u, x := out1, var1
 
 	// define boundary conditions
-	penalty := Constant(1.0)
+	penalty := Constant(1000000.0)
 	bcs := Branch(func(xv []float64) Func {
 		if xv[int(x)] == 0 {
-			return Sum{Constant(1), Negative(u)}
+			return Sum{Constant(0), Negative(u)}
 		} else if xv[int(x)] == 1 {
+			return Sum{Constant(0), Negative(u)}
 			return Sum{Constant(7), Negative(u)}
 		}
 		return Constant(0)
 	})
 
-	k := Constant(1)
-	heatSource := Constant(0)
-	// define our PDE: -k*laplace(u) = S
+	k := Branch(func(xv []float64) Func {
+		if xv[int(x)] < 0.5 {
+			return Constant(1)
+		}
+		return Constant(1)
+	})
+	heatSource := Constant(70)
+	// define our PDE: -k*laplace(u)=S --> residual R=k*laplace(u)+S
 	residual := Sum{Mult{k, Laplace(u, x)}, heatSource}
 
-	net.CostFunc = Sum{&Pow{residual, Constant(2)}, &Pow{Mult{penalty, bcs}, Constant(2)}}.Simplify()
+	net.CostFunc = Sum{&Pow{residual, Constant(2)}, Mult{penalty, &Pow{bcs, Constant(2)}}}.Simplify()
 	fmt.Println("costfunc: ", net.CostFunc)
 
 	// build training data (input variable combos) and train the network
-	for xv := 0.01; xv < 1; xv += .01 {
-		dummy := 1.0 // dummy input value corresponding to our dummy variable
-		net.TrainData = append(net.TrainData, []float64{xv, dummy})
-	}
+	dummyv := 1.0 // dummy input value corresponding to our dummy variable
 	// manually add boundary positions
-	net.TrainData = append(net.TrainData, []float64{0, 1})
-	net.TrainData = append(net.TrainData, []float64{1, 1})
+	net.TrainData = append(net.TrainData, []float64{0, dummyv})
+	net.TrainData = append(net.TrainData, []float64{1, dummyv})
+	for xv := 0.01; xv < 1; xv += .1 {
+		net.TrainData = append(net.TrainData, []float64{xv, dummyv})
+	}
 
-	learnRate := .9
-	net.Train(learnRate)
+	net.Train()
 
 	// look at the results
 	var buf bytes.Buffer
-	for xv := 0.0; xv <= 1.1; xv += .1 {
-		fmt.Fprintf(&buf, "%v\t%v\n", xv, u.Eval([]float64{xv, 1}))
+	for xv := 0.0; xv <= 1.1; xv += .01 {
+		fmt.Fprintf(&buf, "%v\t%v\n", xv, u.Eval([]float64{xv, dummyv}))
 	}
 
 	fmt.Println("Approximation Eqn: ", out1)
 	fmt.Println("Solution (x u):")
 	fmt.Print(buf.String())
+
+	cmd := exec.Command("gnuplot", "-e", `set terminal svg; set output "`+*plot+`"; plot "-" u 1:2 w l`)
+	cmd.Stdin = &buf
+	cmd.Stderr = os.Stderr
+	err := cmd.Run()
+	if err != nil {
+		log.Fatal(err)
+	}
 }
