@@ -1,10 +1,12 @@
 package autodiff
 
-import "math"
+import (
+	"math"
+)
 
 type Number interface {
 	Value() float64
-	Deriv(i int)
+	Deriv(i int) float64
 }
 
 type GeneralNumber struct {
@@ -14,7 +16,7 @@ type GeneralNumber struct {
 
 var NDims int
 
-func NewNumber() GeneralNumber         { return GeneralNumber{Derivs: make([]float64, NDims)} }
+func NewGeneralNumber() GeneralNumber  { return GeneralNumber{Derivs: make([]float64, NDims)} }
 func (g GeneralNumber) Value() float64 { return g.Val }
 func (g GeneralNumber) Deriv(i int) float64 {
 	if i < len(g.Derivs) {
@@ -37,33 +39,32 @@ func (v Variable) Deriv(i int) float64 {
 	return 0
 }
 
-type Constant struct {
-	Val float64
-}
+type Const float64
 
-func NewConstant(val float64) Constant { return Constant{Val: val} }
-func (c Constant) Value() float64      { return c.Val }
-func (c Constant) Deriv(i int) float64 { return 0 }
+func (c Const) Value() float64      { return float64(c) }
+func (c Const) Deriv(i int) float64 { return 0 }
 
 func Ln(a Number) Number {
-	result := NewNumber()
+	result := NewGeneralNumber()
 	result.Val = math.Log(a.Value())
 	for i := 0; i < NDims; i++ {
-		results.Deriv(i) = a.Deriv(i) / a.Value()
+		result.Derivs[i] = a.Deriv(i) / a.Value()
 	}
 	return result
 }
+
+type Function func(vars ...Variable) Number
 
 func Add(nums ...Number) Number {
 	if len(nums) == 0 {
 		return GeneralNumber{}
 	}
 
-	result := NewNumberLike(nums[0])
+	result := NewGeneralNumber()
 	for _, n := range nums {
-		result.Val += n.Val
+		result.Val += n.Value()
 		for i := 0; i < NDims; i++ {
-			result.Deriv(i) += n.Deriv(i)
+			result.Derivs[i] += n.Deriv(i)
 		}
 	}
 	return result
@@ -71,12 +72,12 @@ func Add(nums ...Number) Number {
 
 func Mult(nums ...Number) Number {
 	if len(nums) == 0 {
-		return Number{}
+		return GeneralNumber{}
 	}
 
-	result := NewNumberLike(nums[0])
+	result := NewGeneralNumber()
 	for _, n := range nums {
-		result.Val *= n.Val
+		result.Val *= n.Value()
 		for i := 0; i < NDims; i++ {
 			term := n.Deriv(i)
 			for j := 0; j < NDims; j++ {
@@ -84,17 +85,17 @@ func Mult(nums ...Number) Number {
 					term *= n.Deriv(j)
 				}
 			}
-			result.Deriv(i) += term
+			result.Derivs[i] += term
 		}
 	}
 	return result
 }
 
 func Pow(a, b Number) Number {
-	result := NewNumberLike(a)
-	result.Val = math.Pow(a, b)
+	result := NewGeneralNumber()
+	result.Val = math.Pow(a.Value(), b.Value())
 	for i := 0; i < NDims; i++ {
-		results.Deriv(i) = result.Val * (b.Deriv(i)*math.Log(math.Abs(a.Value())) + a.Deriv(i)*b.Value()/a.Value())
+		result.Derivs[i] = result.Val * (b.Deriv(i)*math.Log(math.Abs(a.Value())) + a.Deriv(i)*b.Value()/a.Value())
 	}
 	return result
 }
