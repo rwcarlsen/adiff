@@ -18,6 +18,14 @@ func NewVariable(index int, val float64) Number {
 	return n
 }
 
+func Clone(n Number) Number {
+	clone := NewNumber(n.Val)
+	for i := 0; i < NDims; i++ {
+		clone.Derivs[i] = n.Derivs[i]
+	}
+	return clone
+}
+
 func Const(val float64) Number { return NewNumber(val) }
 
 func Ln(a Number) Number {
@@ -60,6 +68,17 @@ func Mult(nums ...Number) Number {
 		result.Val *= n.Val
 	}
 	return result
+}
+
+func Abs(n Number) Number {
+	c := Clone(n)
+	if c.Val < 0 {
+		c.Val = -c.Val
+		for i := 0; i < NDims; i++ {
+			c.Derivs[i] = -c.Derivs[i]
+		}
+	}
+	return c
 }
 
 func Pow(a, b Number) Number {
