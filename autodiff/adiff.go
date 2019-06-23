@@ -18,73 +18,73 @@ func NewVariable(index int, val float64) Number {
 	return n
 }
 
-func Clone(n Number) Number {
-	clone := NewNumber(n.Val)
+func Const(dst Number, val float64) Number {
+	dst.Val = val
 	for i := 0; i < NDims; i++ {
-		clone.Derivs[i] = n.Derivs[i]
+		dst.Derivs[i] = 0
 	}
-	return clone
+	return dst
 }
 
-func Const(val float64) Number { return NewNumber(val) }
-
-func Ln(a Number) Number {
-	result := NewNumber(math.Log(a.Val))
+func Log(dst, a Number) Number {
 	for i := 0; i < NDims; i++ {
-		result.Derivs[i] = a.Derivs[i] / a.Val
+		dst.Derivs[i] = a.Derivs[i] / a.Val
 	}
-	return result
+	dst.Val = math.Log(a.Val)
+	return dst
 }
 
-func Add(nums ...Number) Number {
-	if len(nums) == 0 {
-		return NewNumber(0)
+func Add(dst Number, a, b Number) Number {
+	for i := 0; i < NDims; i++ {
+		dst.Derivs[i] = a.Derivs[i] + b.Derivs[i]
 	}
+	dst.Val = a.Val + b.Val
+	return dst
+}
 
-	result := NewNumber(0)
-	for _, n := range nums {
-		result.Val += n.Val
+func Mul(dst Number, a, b Number) Number {
+	for i := 0; i < NDims; i++ {
+		dst.Derivs[i] = a.Derivs[i]*b.Val + a.Val*b.Derivs[i]
+	}
+	dst.Val = a.Val * b.Val
+	return dst
+}
+
+func Abs(dst, n Number) Number {
+	if n.Val < 0 {
 		for i := 0; i < NDims; i++ {
-			result.Derivs[i] += n.Derivs[i]
+			dst.Derivs[i] = -n.Derivs[i]
+		}
+	} else {
+		for i := 0; i < NDims; i++ {
+			dst.Derivs[i] = n.Derivs[i]
 		}
 	}
-	return result
+	dst.Val = math.Abs(n.Val)
+	return dst
 }
 
-func Mult(nums ...Number) Number {
-	if len(nums) == 0 {
-		return NewNumber(0)
-	}
-
-	result := NewNumber(nums[0].Val)
+func Sin(dst, a Number) Number {
 	for i := 0; i < NDims; i++ {
-		result.Derivs[i] = nums[0].Derivs[i]
+		dst.Derivs[i] = math.Cos(a.Val) * a.Derivs[i]
 	}
-
-	for _, n := range nums[1:] {
-		for i := 0; i < NDims; i++ {
-			result.Derivs[i] = result.Derivs[i]*n.Val + result.Val*n.Derivs[i]
-		}
-		result.Val *= n.Val
-	}
-	return result
+	dst.Val = math.Sin(a.Val)
+	return dst
 }
 
-func Abs(n Number) Number {
-	c := Clone(n)
-	if c.Val < 0 {
-		c.Val = -c.Val
-		for i := 0; i < NDims; i++ {
-			c.Derivs[i] = -c.Derivs[i]
-		}
-	}
-	return c
-}
-
-func Pow(a, b Number) Number {
-	result := NewNumber(math.Pow(a.Val, b.Val))
+func Cos(dst, a Number) Number {
 	for i := 0; i < NDims; i++ {
-		result.Derivs[i] = result.Val * (b.Derivs[i]*math.Log(math.Abs(a.Val)) + a.Derivs[i]*b.Val/a.Val)
+		dst.Derivs[i] = -math.Sin(a.Val) * a.Derivs[i]
 	}
-	return result
+	dst.Val = math.Cos(a.Val)
+	return dst
+}
+
+func Pow(dst, a, b Number) Number {
+	result := math.Pow(a.Val, b.Val)
+	for i := 0; i < NDims; i++ {
+		dst.Derivs[i] = result * (b.Derivs[i]*math.Log(math.Abs(a.Val)) + a.Derivs[i]*b.Val/a.Val)
+	}
+	dst.Val = result
+	return dst
 }
