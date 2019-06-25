@@ -4,101 +4,109 @@ import (
 	"math"
 )
 
-type Number struct {
+type Number interface {
+	Deriv(i int) float64
+	Value() float64
+}
+
+func IsConst(ndims int, n Number) bool {
+	for i := 0; i < ndims; i++ {
+		if n.Deriv(i) != 0 {
+			return false
+		}
+	}
+	return true
+}
+
+type Simple struct {
 	Val    float64
 	Derivs []float64
 }
 
-var NDims int
-
-func NewNumber(val float64) Number { return Number{Val: val, Derivs: make([]float64, NDims)} }
-func NewVariable(index int, val float64) Number {
-	n := Number{Val: val, Derivs: make([]float64, NDims)}
-	n.Derivs[index] = 1
-	return n
+func NewSimple(ndims int, val float64) Simple {
+	return Simple{Val: val, Derivs: make([]float64, ndims)}
 }
 
-func Const(dst Number, val float64) Number {
-	dst.Val = val
-	for i := 0; i < NDims; i++ {
-		dst.Derivs[i] = 0
+func (s Simple) Value() float64      { return s.Val }
+func (s Simple) Deriv(i int) float64 { return s.Derivs[i] }
+
+type Const float64
+
+func (c Const) Value() float64      { return float64(c) }
+func (c Const) Deriv(i int) float64 { return 0 }
+
+type Variable struct {
+	Index int
+	Val   float64
+}
+
+func (v Variable) Value() float64 { return float64(v.Val) }
+func (v Variable) Deriv(i int) float64 {
+	if i == v.Index {
+		return 1
 	}
+	return 0
+}
+
+func Log(dst Simple, a Number) Number {
+	for i := 0; i < len(dst.Derivs); i++ {
+		dst.Derivs[i] = a.Deriv(i) / a.Value()
+	}
+	dst.Val = math.Log(a.Value())
 	return dst
 }
 
-func Log(dst, a Number) Number {
-	result := NewNumber(math.Log(a.Val))
-	for i := 0; i < NDims; i++ {
-		result.Derivs[i] = a.Derivs[i] / a.Val
+func Add(dst Simple, a, b Number) Number {
+	for i := 0; i < len(dst.Derivs); i++ {
+		dst.Derivs[i] = a.Deriv(i) + b.Deriv(i)
 	}
-	return result
+	dst.Val = a.Value() + b.Value()
+	return dst
 }
 
-func Add(dst Number, nums ...Number) Number {
-	if len(nums) == 0 {
-		return NewNumber(0)
+func Mul(dst Simple, a, b Number) Number {
+	for i := 0; i < len(dst.Derivs); i++ {
+		dst.Derivs[i] = a.Deriv(i)*b.Value() + a.Value()*b.Deriv(i)
 	}
-
-	result := NewNumber(0)
-	for _, n := range nums {
-		result.Val += n.Val
-		for i := 0; i < NDims; i++ {
-			result.Derivs[i] += n.Derivs[i]
-		}
-	}
-	return result
+	dst.Val = a.Value() * b.Value()
+	return dst
 }
 
-func Mul(dst Number, nums ...Number) Number {
-	result := NewNumber(nums[0].Val)
-	for i := 0; i < NDims; i++ {
-		result.Derivs[i] = nums[0].Derivs[i]
-	}
-
-	for _, n := range nums[1:] {
-		for i := 0; i < NDims; i++ {
-			result.Derivs[i] = result.Derivs[i]*n.Val + result.Val*n.Derivs[i]
-		}
-		result.Val *= n.Val
-	}
-	return result
-}
-
-func Abs(dst, n Number) Number {
-	if n.Val < 0 {
-		dst.Val = -n.Val
-		for i := 0; i < NDims; i++ {
-			dst.Derivs[i] = -n.Derivs[i]
+func Abs(dst Simple, n Number) Number {
+	if n.Value() < 0 {
+		dst.Val = -n.Value()
+		for i := 0; i < len(dst.Derivs); i++ {
+			dst.Derivs[i] = -n.Deriv(i)
 		}
 	} else {
-		dst.Val = n.Val
-		for i := 0; i < NDims; i++ {
-			dst.Derivs[i] = n.Derivs[i]
+		dst.Val = n.Value()
+		for i := 0; i < len(dst.Derivs); i++ {
+			dst.Derivs[i] = n.Deriv(i)
 		}
 	}
 	return dst
 }
 
-func Sin(dst, a Number) Number {
-	for i := 0; i < NDims; i++ {
-		dst.Derivs[i] = math.Cos(a.Val) * a.Derivs[i]
+func Sin(dst Simple, a Number) Number {
+	for i := 0; i < len(dst.Derivs); i++ {
+		dst.Derivs[i] = math.Cos(a.Value()) * a.Deriv(i)
 	}
-	dst.Val = math.Sin(a.Val)
+	dst.Val = math.Sin(a.Value())
 	return dst
 }
 
-func Cos(dst, a Number) Number {
-	for i := 0; i < NDims; i++ {
-		dst.Derivs[i] = -math.Sin(a.Val) * a.Derivs[i]
+func Cos(dst Simple, a Number) Number {
+	for i := 0; i < len(dst.Derivs); i++ {
+		dst.Derivs[i] = -math.Sin(a.Value()) * a.Deriv(i)
 	}
-	dst.Val = math.Cos(a.Val)
+	dst.Val = math.Cos(a.Value())
 	return dst
 }
 
-func Pow(dst, a, b Number) Number {
-	result := math.Pow(a.Val, b.Val)
-	for i := 0; i < NDims; i++ {
-		dst.Derivs[i] = result * (b.Derivs[i]*math.Log(math.Abs(a.Val)) + a.Derivs[i]*b.Val/a.Val)
+func Pow(dst Simple, a, b Number) Number {
+	result := math.Pow(a.Value(), b.Value())
+	for i := 0; i < len(dst.Derivs); i++ {
+		dst.Derivs[i] = result * (b.Deriv(i)*math.Log(math.Abs(a.Value())) + a.Deriv(i)*b.Value()/a.Value())
 	}
 	dst.Val = result
 	return dst
